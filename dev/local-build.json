@@ -19,6 +19,7 @@
         "install -Dm644 src/main.py /app/share/io.github.cappedcat1710.Reeds/main.py",
         "install -Dm644 src/reeds_feeds.py /app/share/io.github.cappedcat1710.Reeds/reeds_feeds.py",
         "install -Dm644 src/reeds_store.py /app/share/io.github.cappedcat1710.Reeds/reeds_store.py",
+        "install -Dm644 src/reeds_motion.py /app/share/io.github.cappedcat1710.Reeds/reeds_motion.py",
         "install -Dm644 src/reeds.css /app/share/io.github.cappedcat1710.Reeds/reeds.css",
         "install -Dm644 data/io.github.cappedcat1710.Reeds.desktop /app/share/applications/io.github.cappedcat1710.Reeds.desktop",
         "install -Dm644 data/io.github.cappedcat1710.Reeds.metainfo.xml /app/share/metainfo/io.github.cappedcat1710.Reeds.metainfo.xml",

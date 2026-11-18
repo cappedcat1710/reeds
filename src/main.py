@@ -30,7 +30,8 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
+gi.require_version("Graphene", "1.0")
+from gi.repository import Adw, Gdk, Gio, GLib, Graphene, Gtk, Pango  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -43,6 +44,7 @@ from luma_appkit import (  # noqa: E402
 
 import reeds_feeds as feeds_lib  # noqa: E402
 from reeds_feeds import FeedError  # noqa: E402
+from reeds_motion import Motion  # noqa: E402
 from reeds_store import EntryRow, FeedRow, Library  # noqa: E402
 
 APP_ID = "io.github.cappedcat1710.Reeds"
@@ -118,6 +120,10 @@ class ReedsWindow(AppWindow):
             default_width=1180, default_height=760, minimum_width=360, minimum_height=420,
         )
         add_style_sheet(style_path())
+        self.motion = Motion(self)
+        self._rows_seen: set[int] = set()           # articles the list has shown: what's new is what isn't here
+        self._appear: dict[str, int] = {}           # sidebar places to fade in on the next draw, with their order
+        self._article_flip = 0
 
         sidebar = self._build_sidebar()
         article_list = self._build_list()
@@ -126,7 +132,10 @@ class ReedsWindow(AppWindow):
         body = Gtk.Box(hexpand=True, vexpand=True)
         body.append(sidebar)
         body.append(self.list_first)
-        self.set_body(body)
+        frame = Gtk.Overlay(child=body, hexpand=True, vexpand=True)
+        frame.add_overlay(self.motion.layer)         # motion draws over everything and takes no clicks
+        frame.set_measure_overlay(self.motion.layer, False)
+        self.set_body(frame)
         self.sidebar_toggle = SidebarToggle(self.sidebar, drawer_below=901)
         self.set_leading(self.sidebar_toggle)
         self._add_breakpoints()
@@ -134,7 +143,7 @@ class ReedsWindow(AppWindow):
         self.connect("close-request", self._closing)
         self._drawn_tier = self.tier
 
-        self._render_all()
+        self._render_all("all")
         self.list_first.show_list() if self.phone else None
         GLib.idle_add(self._first_refresh)
         GLib.timeout_add(250, self._initial_focus)
@@ -163,7 +172,7 @@ class ReedsWindow(AppWindow):
         self._search_open = False
         self._render_chrome()
         if self.selected is not None:
-            self._show_article(self.selected)
+            self._show_article(self.selected, how="none")
         if self.phone:
             self.list_first.show_detail() if self.selected else self.list_first.show_list()
 
@@ -250,7 +259,7 @@ class ReedsWindow(AppWindow):
         island = Island()
         island.set_hexpand(True)
         self.corner_slot = Adw.Bin(halign=Gtk.Align.END, valign=Gtk.Align.START)
-        self.article_holder = Adw.Bin(vexpand=True, hexpand=True)
+        self.article_holder = Gtk.Stack(vexpand=True, hexpand=True, hhomogeneous=True, vhomogeneous=True)
         self.page_stack = Gtk.Stack(vexpand=True, hexpand=True)
         self.page_stack.add_named(self.article_holder, "article")
         self.page_stack.add_named(EmptyState(
@@ -270,14 +279,22 @@ class ReedsWindow(AppWindow):
 
     # ── Rendering ───────────────────────────────────────────────────────────
 
-    def _render_all(self) -> None:
+    def _render_all(self, enter: str | None = None) -> None:
         self._render_sidebar()
-        self._render_list()
+        self._render_list(enter)
         self._render_chrome()
+
+    def _crossfade(self, stack: Gtk.Stack) -> None:
+        """A stack's pages give way with a short fade (none when animations are off)."""
+        ms = self.motion.ms("fade")
+        stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE if ms else Gtk.StackTransitionType.NONE)
+        stack.set_transition_duration(ms)
 
     def _render_chrome(self) -> None:
         """What depends on the tier or the selection: the page, the corner and the bars."""
         has_feeds = bool(self.lib.feeds())
+        self._crossfade(self.list_stack)
+        self._crossfade(self.page_stack)
         self.list_stack.set_visible_child_name("fresh" if (self.phone and not has_feeds) else "list")
         if not has_feeds:
             self.page_stack.set_visible_child_name("fresh")
@@ -330,6 +347,11 @@ class ReedsWindow(AppWindow):
             self.places.select_row(selected)
         self._describe_places(counts, feeds)
         self._restore_focus(focused)
+        appear, self._appear = self._appear, {}
+        for key, order in appear.items():
+            row = self.place_rows.get(key)
+            if row is not None:
+                self.motion.fade_in(row, delay=order * self.motion.ms("fade", 0.55))
 
     def _describe_places(self, counts: dict, feeds: list) -> None:
         for key, word in (("all", "unread"), ("later", "saved"), ("starred", "starred")):
@@ -353,7 +375,9 @@ class ReedsWindow(AppWindow):
     def _feed_menu(self, row: Gtk.Widget, feed: FeedRow) -> None:
         attach_context_menu(row, self._feed_commands(feed))
 
-    def _render_list(self) -> None:
+    def _render_list(self, enter: str | None = None) -> None:
+        """`enter` is "all" (a new place: the first rows fade in one after another), "new" (only articles not
+        shown before) or None (a filter or a search: no motion)."""
         focused = self._focus_key("entry")
         entries = self.lib.entries(self.place, unread_only=self.unread_only, query=self.query, keep=self.keep, limit=300)
         holder = self.list_empty.get_parent()
@@ -377,6 +401,15 @@ class ReedsWindow(AppWindow):
         if self.selected is not None and self.selected.id in self.row_of:
             self.rows.select_row(self.row_of[self.selected.id])
         self._restore_focus(focused)
+        if enter == "all":
+            arriving = list(self.row_of.values())[:14]
+        elif enter == "new":
+            arriving = [row for entry_id, row in self.row_of.items() if entry_id not in self._rows_seen][:8]
+        else:
+            arriving = []
+        self._rows_seen = set(self.row_of)
+        for index, row in enumerate(arriving):
+            self.motion.fade_in(row, delay=index * self.motion.ms("fade", 0.12))
 
     def _empty_text(self) -> str:
         if self.query.strip():
@@ -479,12 +512,13 @@ class ReedsWindow(AppWindow):
         row.update_property([Gtk.AccessibleProperty.DESCRIPTION], [text])
 
     def go(self, place: str) -> None:
+        enter = "all" if place != self.place else None
         if place != self.place:
             self.place = place
             self.keep = set()
             self.selected = None
         self._render_sidebar()
-        self._render_list()
+        self._render_list(enter)
         self._render_chrome()
         if self.phone:
             self.list_first.show_list()
@@ -499,7 +533,7 @@ class ReedsWindow(AppWindow):
         if entry_id is not None:
             self.open_entry(entry_id)
 
-    def open_entry(self, entry_id: int) -> None:
+    def open_entry(self, entry_id: int, how: str = "open") -> None:
         entry = self.lib.entry(entry_id)
         if entry is None:
             return
@@ -514,7 +548,7 @@ class ReedsWindow(AppWindow):
             self.rows.select_row(row)
         self.last_open = entry_id
         self._update_counts()
-        self._show_article(entry, focus=True)
+        self._show_article(entry, focus=True, how=how)
         self.list_first.show_detail()
         self._render_chrome()
 
@@ -551,7 +585,7 @@ class ReedsWindow(AppWindow):
             return
         index = self.shown.index(self.selected.id) + direction
         if 0 <= index < len(self.shown):
-            self.open_entry(self.shown[index])
+            self.open_entry(self.shown[index], how="next" if direction > 0 else "previous")
         else:
             Toast.show(self._toast_host(), "No more articles here", kind="done")
 
@@ -595,7 +629,8 @@ class ReedsWindow(AppWindow):
             if not error.matches(Gtk.dialog_error_quark(), Gtk.DialogError.DISMISSED):
                 Toast.show(self._toast_host(), "Couldn’t open that address", kind="error")
 
-    def _show_article(self, entry: EntryRow, *, focus: bool = False) -> None:
+    def _show_article(self, entry: EntryRow, *, focus: bool = False, how: str = "open") -> None:
+        """`how`: "open" fades the article in, "next" and "previous" slide it, "none" swaps it at once."""
         column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, margin_top=78 if self.phone else 34, margin_bottom=140,
                          margin_start=20 if self.phone else 28, margin_end=20 if self.phone else 28)
         column.add_css_class("reeds-article")
@@ -641,11 +676,37 @@ class ReedsWindow(AppWindow):
         scroll.add_controller(copy)
         scroll.update_property([Gtk.AccessibleProperty.LABEL], [f"{entry.title}, from {entry.feed_title}"])
         self.article_scroll = scroll
-        self.article_holder.set_child(scroll)
+        self._swap_article(scroll, how)
         if focus:
             GLib.idle_add(lambda: (self.focus_pane("article"), False)[1])
         for picture, url in pictures[:MAX_IMAGES]:
             self._load_picture(picture, url, entry.id)
+
+    def _swap_article(self, scroll: Gtk.Widget, how: str) -> None:
+        stack = self.article_holder
+        name = "a" if self._article_flip == 0 else "b"
+        self._article_flip ^= 1
+        stale = stack.get_child_by_name(name)
+        if stale is not None:
+            stack.remove(stale)
+        stack.add_named(scroll, name)
+        ms = self.motion.ms("morph")
+        if how == "none" or not ms or stack.get_visible_child() is None:
+            kind = Gtk.StackTransitionType.NONE
+        elif how in ("next", "previous") and self.motion.moves():
+            kind = Gtk.StackTransitionType.SLIDE_UP if how == "next" else Gtk.StackTransitionType.SLIDE_DOWN
+        else:
+            kind = Gtk.StackTransitionType.CROSSFADE
+        stack.set_transition_type(kind)
+        stack.set_transition_duration(ms)
+        previous = stack.get_visible_child()
+        stack.set_visible_child_name(name)
+        if previous is not None:        # once it has given way, the old article is not kept
+            GLib.timeout_add(ms + 80, lambda: (self._drop_hidden(previous), False)[1])
+
+    def _drop_hidden(self, widget: Gtk.Widget) -> None:
+        if widget.get_parent() is self.article_holder and self.article_holder.get_visible_child() is not widget:
+            self.article_holder.remove(widget)
 
     def _copy_selection(self) -> bool:
         """Copies the text selected in the article. Returns False when nothing is selected."""
@@ -723,6 +784,7 @@ class ReedsWindow(AppWindow):
             try:
                 picture.set_paintable(Gdk.Texture.new_from_bytes(GLib.Bytes.new(data)))
                 picture.set_visible(True)
+                self.motion.fade_in(picture, ms=self.motion.ms("fade", 1.4))
             except GLib.Error:
                 pass
             return False
@@ -828,6 +890,40 @@ class ReedsWindow(AppWindow):
 
     # ── What you do with an article ─────────────────────────────────────────
 
+    @staticmethod
+    def _find_tooltip(root: Gtk.Widget, text: str) -> Gtk.Widget | None:
+        child = root.get_first_child()
+        while child is not None:
+            if child.get_tooltip_text() == text and child.get_mapped():
+                return child
+            found = ReedsWindow._find_tooltip(child, text)
+            if found is not None:
+                return found
+            child = child.get_next_sibling()
+        return None
+
+    def _fx_origin(self, *names: str) -> Gtk.Widget | tuple[float, float]:
+        """The button an effect starts from: the first of `names` that is on screen (the corner pill on a
+        computer, the bar on a phone, or the bar's ⋯ when the action has moved into it). A shortcut with no
+        button to point at starts low and central on the page."""
+        for name in (*names, "More"):
+            for root in (self.corner_slot, self.page_center):
+                found = self._find_tooltip(root, name)
+                if found is not None:
+                    return found
+        ok, point = self.page_host.compute_point(
+            self.motion.layer, Graphene.Point().init(self.page_host.get_width() / 2, self.page_host.get_height() - 80))
+        return (point.x, point.y) if ok else (0.0, 0.0)
+
+    def _fx(self, icon: str, *names: str, to: Gtk.Widget | None = None, css: str = "reeds-fx-pop",
+            drift: tuple[float, float] = (0, -30)) -> None:
+        """An effect for what was just done, once the redrawn buttons are in place."""
+        GLib.timeout_add(45, lambda: (self.motion.burst(icon, self._fx_origin(*names), to=to, css=css, drift=drift), False)[1])
+
+    def _sidebar_row_in_view(self, place: str) -> Gtk.Widget | None:
+        row = self.place_rows.get(place)
+        return row if row is not None and self.tier == "regular" and row.get_mapped() else None
+
     def _set_flag(self, flag: str, value: bool) -> None:
         if self.selected is None:
             return
@@ -844,6 +940,8 @@ class ReedsWindow(AppWindow):
             return
         on = not self.selected.starred
         self._set_flag("starred", on)
+        if on:
+            self._fx("star-filled", "Star", css="reeds-fx-star")
         Toast.show(self._toast_host(), "Starred" if on else "Star removed", kind="favourite" if on else "unfavourite")
 
     def toggle_later(self) -> None:
@@ -851,6 +949,8 @@ class ReedsWindow(AppWindow):
             return
         on = not self.selected.later
         self._set_flag("later", on)
+        if on:      # it is carried to Read later, where there is room to see it land
+            self._fx("bookmark-filled", "Read later", to=self._sidebar_row_in_view("later"))
         Toast.show(self._toast_host(), "Saved to read later" if on else "Removed from read later",
                    kind="saved" if on else "undone")
 
@@ -858,15 +958,18 @@ class ReedsWindow(AppWindow):
         if self.selected is None:
             return
         self._set_flag("read", not self.selected.read)
+        self._fx("check" if self.selected.read else "eye-off", "Mark as unread")
         Toast.show(self._toast_host(), "Marked as read" if self.selected.read else "Marked as unread", kind="done")
 
     def open_original(self) -> None:
         if self.selected is not None and self.selected.link:
             self._launch(self.selected.link)
+            self._fx("square-arrow-out-up-right", "Open in browser", drift=(34, -34))
 
     def copy_link(self) -> None:
         if self.selected is not None and self.selected.link:
             self.get_clipboard().set(self.selected.link)
+            self._fx("link", "More")
             Toast.show(self._toast_host(), "Link copied", kind="copied")
 
     def mark_all_read(self) -> None:
@@ -875,8 +978,11 @@ class ReedsWindow(AppWindow):
             Toast.show(self._toast_host(), "Everything here is already read", kind="done")
             return
         self.keep |= set(ids)
+        order = [entry_id for entry_id in self.shown if entry_id in set(ids)]
+        self.motion.stagger(order, lambda entry_id: self._row_read(entry_id, True), self.motion.ms("fade", 0.09), limit=22)
         for entry_id in ids:
-            self._row_read(entry_id, True)
+            if entry_id not in self.row_of:
+                self._row_read(entry_id, True)
         if self.selected is not None:
             self.selected.read = True
         self._update_counts()
@@ -892,7 +998,7 @@ class ReedsWindow(AppWindow):
         self.load_images = not self.load_images
         self.lib.set_setting("images", "1" if self.load_images else "0")
         if self.selected is not None:
-            self._show_article(self.selected)
+            self._show_article(self.selected, how="none")
         self._render_bars()
         Toast.show(self._toast_host(), "Pictures shown" if self.load_images else "Pictures hidden", kind="done")
 
@@ -996,7 +1102,8 @@ class ReedsWindow(AppWindow):
             self.lib.store(feed_id, feed)
             self.keep = set()
             self.place, self.selected = f"feed:{feed_id}", None
-            self._render_all()
+            self._appear = {f"feed:{feed_id}": 0}
+            self._render_all("all")
             if self.phone:
                 self.list_first.show_list()
             Toast.show(self._toast_host(), f"Added {feed.title or feed.url}", kind="added")
@@ -1015,7 +1122,8 @@ class ReedsWindow(AppWindow):
             Toast.show(self._toast_host(), "Those feeds are already here", kind="done")
             return
         self.place, self.selected, self.keep = "all", None, set()
-        self._render_all()
+        self._appear = {f"feed:{feed_id}": order for order, feed_id in enumerate(added)}
+        self._render_all("all")
         if self.phone:
             self.list_first.show_list()
         self._focus_list_after_refresh = True
@@ -1027,6 +1135,7 @@ class ReedsWindow(AppWindow):
     def _renamed(self, feed: FeedRow, text: str) -> None:
         if text:
             self.lib.rename_feed(feed.id, text)
+            self._appear = {f"feed:{feed.id}": 0}
             self._render_all()
             Toast.show(self._toast_host(), "Feed renamed", kind="done")
 
@@ -1035,6 +1144,7 @@ class ReedsWindow(AppWindow):
 
     def _moved(self, feed: FeedRow, text: str) -> None:
         self.lib.move_feed(feed.id, text)
+        self._appear = {f"feed:{feed.id}": 0}
         self._render_sidebar()
         self._render_bars()
         Toast.show(self._toast_host(), f"Moved to {text}" if text else "Removed from its folder", kind="done")
@@ -1047,16 +1157,33 @@ class ReedsWindow(AppWindow):
 
     def _unsubscribe(self, feed: FeedRow) -> None:
         address, title, folder, site = feed.url, feed.title, feed.folder, feed.site_url
-        self.lib.remove_feed(feed.id)
-        if self.place == f"feed:{feed.id}":
-            self.place, self.selected = "all", None
-        self._render_all()
-        if self.phone:
-            self.list_first.show_list()
-        Toast.show(self._toast_host(), "Unsubscribed", kind="deleted", undo=lambda: self._resubscribe(address, title, folder, site))
+        self.lib.remove_feed(feed.id)               # the data goes now; the motion only shows it going
+        if self.selected is not None and self.selected.feed_id == feed.id:
+            self.selected, self.article_scroll = None, None
+
+        row = self._sidebar_row_in_view(f"feed:{feed.id}")
+
+        def gone() -> None:
+            if self.closed:
+                return
+            if self.place == f"feed:{feed.id}":
+                self.place, self.selected = "all", None
+            self._render_all("all" if row is None else None)     # a whole list that was thrown away comes back in
+            if self.phone:
+                self.list_first.show_list()
+            Toast.show(self._toast_host(), "Unsubscribed", kind="deleted",
+                       undo=lambda: self._resubscribe(address, title, folder, site))
+
+        if row is not None:     # a computer: the feed's own row goes, into a bin above the sidebar's foot
+            ok, top = self.sidebar.compute_point(self.motion.layer, Graphene.Point().init(self.sidebar.get_width() / 2, 0))
+            foot_y = self.sidebar.get_height() - 150
+            self.motion.trash_dump(row, gone, bin_at=(top.x, top.y + foot_y) if ok else None)
+        else:                   # a phone or a narrow window: the whole list is gathered up and tipped in
+            self.motion.trash_dump(self.list_stack, gone)
 
     def _resubscribe(self, address: str, title: str, folder: str, site: str) -> None:
         feed_id, _ = self.lib.add_feed(address, title, folder, site)
+        self._appear = {f"feed:{feed_id}": 0}
         self._render_all()
         self.refresh([self.lib.feed(feed_id)])
 
@@ -1083,6 +1210,7 @@ class ReedsWindow(AppWindow):
             feed_id, created = self.lib.add_feed(address, title, folder)
             if created:
                 added.append(feed_id)
+        self._appear = {f"feed:{feed_id}": order for order, feed_id in enumerate(added)}
         self._render_all()
         if not added:
             Toast.show(self._toast_host(), "Those feeds are already here", kind="done")
@@ -1188,7 +1316,7 @@ class ReedsWindow(AppWindow):
         self.refreshing = False
         self._render_sidebar()
         if self._new or self._failed:
-            self._render_list()
+            self._render_list("new")
         self._render_bars()
         if self._focus_list_after_refresh:
             self._focus_list_after_refresh = False
@@ -1204,6 +1332,7 @@ class ReedsWindow(AppWindow):
 
     def _closing(self, *_args) -> bool:
         self.closed = True
+        self.motion.closed = True
         self.pool.shutdown(wait=False, cancel_futures=True)
         self.lib.close()
         return False

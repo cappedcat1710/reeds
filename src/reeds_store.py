@@ -154,6 +154,8 @@ class Library:
     def store(self, feed_id: int, feed: Feed) -> int:
         """Keep what a fetch found. Returns how many articles were new."""
         now = time.time()
+        if self.db.execute("select 1 from feeds where id = ?", (feed_id,)).fetchone() is None:
+            return 0                      # unsubscribed while this was being fetched
         if feed.not_modified:
             self.db.execute("update feeds set checked = ?, error = '' where id = ?", (now, feed_id))
             self.db.commit()

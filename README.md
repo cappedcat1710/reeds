@@ -23,6 +23,11 @@ The screenshots use sample feeds and articles written for the purpose.
 - **Keep.** Star an article, or save it to read later. Unsubscribing can be undone.
 - **Find.** Search every downloaded article, filter to unread, and group feeds in folders.
 - **Light and dark.** Reeds follows the desktop's colour scheme.
+- **Motion that shows what happened.** Unsubscribing carries the feed to a bin and tips it in. Starring pops a star,
+  Read later carries a bookmark to the Read later place, and opening the original sends an arrow out. Articles slide
+  or fade into each other, new articles and feeds fade in, and marking everything read clears the dots in a wave.
+  The curves and durations are LumaUI's own. With **Reduce Motion** on, nothing travels and each change is a short
+  fade; with animations off, everything simply appears.
 
 Built with LumaUI: `AppWindow`, `NavigationSidebar` and `SidebarFoot`, `ListFirst`, `ActionCenter`,
 `CornerPill`, `Toast`, `DestructiveDialog` and `EmptyState`. The only things the app draws itself are an
@@ -93,7 +98,8 @@ yet. The evidence file is left unfilled on purpose.
 | `src/main.py` | The window, the panes, the bars and the keyboard handling |
 | `src/reeds_feeds.py` | Fetching, reading RSS, Atom and RDF, OPML, and turning article HTML into blocks |
 | `src/reeds_store.py` | The SQLite library |
-| `src/reeds.css` | The article's own text and pictures |
+| `src/reeds_motion.py` | The motion: one overlay layer, LumaUI's easing and durations, Reduce Motion |
+| `src/reeds.css` | The article's own text and pictures, and the motion's colours |
 | `docs/simplyluma.com-DESIGN.md` | Notes on Luma's design language, used to match the theme |
 
 ## License

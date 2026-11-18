@@ -40,3 +40,21 @@
 .reeds-article label link:hover {
     color: @luma_accent;
 }
+
+/* Motion: things drawn over the window while an action happens (reeds_motion.py). Colours are Luma tokens. */
+.reeds-fx-bin {
+    background: @luma_float_surface;
+    border: 1px solid @luma_float_ring;
+    border-radius: 999px;
+    padding: 14px;
+    color: @luma_destructive;
+    box-shadow: 0 10px 26px -10px @luma_float_shadow, 0 1px 3px @luma_float_shadow_near;
+}
+
+.reeds-fx-star {
+    color: @luma_favourite;
+}
+
+.reeds-fx-pop {
+    color: @luma_accent;
+}
