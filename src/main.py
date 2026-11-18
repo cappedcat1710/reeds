@@ -1243,9 +1243,12 @@ class ReedsApplication(Adw.Application):
     def _screenshot(window: Gtk.Window, path: str) -> bool:
         from gi.repository import Graphene
         width, height = window.get_width(), window.get_height()
+        scale = float(os.environ.get("APP_SCALE", "1"))        # 2 renders a 2x picture, for the store
         snapshot = Gtk.Snapshot()
+        snapshot.scale(scale, scale)
         Gtk.WidgetPaintable.new(window).snapshot(snapshot, width, height)
-        texture = window.get_renderer().render_texture(snapshot.to_node(), Graphene.Rect().init(0, 0, width, height))
+        texture = window.get_renderer().render_texture(
+            snapshot.to_node(), Graphene.Rect().init(0, 0, round(width * scale), round(height * scale)))
         texture.save_to_png(path)
         window.close()
         return False

@@ -6,12 +6,14 @@ OPML, and works the same on a computer, a tablet and a phone. There is no accoun
 device except the requests for the feeds you follow.
 
 <p align="center">
-  <img src="screenshots/desktop-dark.png" alt="Reeds on a desktop: feeds, the article list and an article" width="760">
+  <img src="screenshots/desktop-light.png" alt="Reeds on a desktop: feeds, the article list and an article" width="760">
 </p>
 
 | Tablet | Phone, list | Phone, article |
 | --- | --- | --- |
 | <img src="screenshots/tablet-dark.png" alt="Reeds on a tablet" width="260"> | <img src="screenshots/phone-list-light.png" alt="The phone list in light" width="150"> | <img src="screenshots/phone-article-dark.png" alt="An article on a phone" width="150"> |
+
+The screenshots use sample feeds and articles written for the purpose.
 
 ## What it does
 

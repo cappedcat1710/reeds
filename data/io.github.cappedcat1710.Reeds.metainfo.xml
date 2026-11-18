@@ -40,28 +40,28 @@
   </keywords>
   <screenshots>
     <screenshot type="default">
-      <caption>A sidebar of feeds, the article list and the article, side by side</caption>
-      <image type="source" width="1270" height="750">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/desktop-dark.png</image>
+      <caption>Feeds, the article list and an article, side by side</caption>
+      <image type="source" width="2560" height="1600">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/desktop-light.png</image>
     </screenshot>
     <screenshot type="extra">
-      <caption>The same window in light, matching the Luma theme</caption>
-      <image type="source" width="1270" height="750">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/desktop-light.png</image>
+      <caption>The same window in Luma's dark appearance</caption>
+      <image type="source" width="2560" height="1600">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/desktop-dark.png</image>
     </screenshot>
     <screenshot type="extra">
-      <caption>On a tablet the places move into the action bar</caption>
-      <image type="source" width="770" height="750">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/tablet-dark.png</image>
+      <caption>On a tablet, places move into the action bar</caption>
+      <image type="source" width="1580" height="1600">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/tablet-dark.png</image>
     </screenshot>
     <screenshot type="extra">
-      <caption>On a phone the list comes first and an article opens over it</caption>
-      <image type="source" width="350" height="710">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/phone-article-dark.png</image>
+      <caption>On a phone, an article opens over the list</caption>
+      <image type="source" width="700" height="1500">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/phone-article-dark.png</image>
     </screenshot>
     <screenshot type="extra">
-      <caption>The phone list, with a place picker, search and refresh in the bar</caption>
-      <image type="source" width="350" height="710">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/phone-list-light.png</image>
+      <caption>The phone list with places, search and refresh</caption>
+      <image type="source" width="700" height="1500">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/phone-list-light.png</image>
     </screenshot>
     <screenshot type="extra">
-      <caption>The first launch offers a few suggested feeds, or add your own</caption>
-      <image type="source" width="1170" height="690">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/first-run-dark.png</image>
+      <caption>The first launch offers suggested feeds to start with</caption>
+      <image type="source" width="2560" height="1600">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/first-run-light.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.cappedcat1710.Reeds.desktop</launchable>
