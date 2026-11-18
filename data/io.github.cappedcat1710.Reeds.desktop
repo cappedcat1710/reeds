@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Reeds
+Comment=Read the sites you follow
+Exec=run-app
+Icon=io.github.cappedcat1710.Reeds
+Terminal=false
+DBusActivatable=false
+Categories=Network;News;Feed;
+Keywords=rss;atom;feed;news;reader;blog;

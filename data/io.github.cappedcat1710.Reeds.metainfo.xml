@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.cappedcat1710.Reeds</id>
+  <name>Reeds</name>
+  <summary>Read the sites you follow</summary>
+  <description>
+    <p>
+      Reeds brings the sites and blogs you follow into one calm place. Add a website or feed
+      address and Reeds finds the feed, keeps your articles on this device and shows what is new.
+    </p>
+    <p>
+      Read articles with their pictures, star the ones you want to keep, and save others to read
+      later. Search everything you have downloaded, group feeds in folders, and bring your feeds
+      in from or out to another reader with an OPML file.
+    </p>
+    <p>
+      It works the same on a computer, a tablet and a phone, and everything you read stays on your
+      device. There is no account.
+    </p>
+  </description>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <developer id="io.github.cappedcat1710">
+    <name>cappedcat1710</name>
+  </developer>
+  <url type="homepage">https://github.com/cappedcat1710/reeds</url>
+  <url type="help">https://github.com/cappedcat1710/reeds#readme</url>
+  <url type="bugtracker">https://github.com/cappedcat1710/reeds/issues</url>
+  <url type="vcs-browser">https://github.com/cappedcat1710/reeds</url>
+  <categories>
+    <category>Network</category>
+    <category>News</category>
+  </categories>
+  <keywords>
+    <keyword>rss</keyword>
+    <keyword>atom</keyword>
+    <keyword>feed</keyword>
+    <keyword>news</keyword>
+    <keyword>reader</keyword>
+  </keywords>
+  <screenshots>
+    <screenshot type="default">
+      <caption>A sidebar of feeds, the article list and the article, side by side</caption>
+      <image type="source" width="1270" height="750">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/desktop-dark.png</image>
+    </screenshot>
+    <screenshot type="extra">
+      <caption>The same window in light, matching the Luma theme</caption>
+      <image type="source" width="1270" height="750">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/desktop-light.png</image>
+    </screenshot>
+    <screenshot type="extra">
+      <caption>On a tablet the places move into the action bar</caption>
+      <image type="source" width="770" height="750">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/tablet-dark.png</image>
+    </screenshot>
+    <screenshot type="extra">
+      <caption>On a phone the list comes first and an article opens over it</caption>
+      <image type="source" width="350" height="710">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/phone-article-dark.png</image>
+    </screenshot>
+    <screenshot type="extra">
+      <caption>The phone list, with a place picker, search and refresh in the bar</caption>
+      <image type="source" width="350" height="710">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/phone-list-light.png</image>
+    </screenshot>
+    <screenshot type="extra">
+      <caption>The first launch offers a few suggested feeds, or add your own</caption>
+      <image type="source" width="1170" height="690">https://raw.githubusercontent.com/cappedcat1710/reeds/main/screenshots/first-run-dark.png</image>
+    </screenshot>
+  </screenshots>
+  <launchable type="desktop-id">io.github.cappedcat1710.Reeds.desktop</launchable>
+  <provides>
+    <binary>run-app</binary>
+  </provides>
+  <custom>
+    <value key="org.projectluma.ApplicationContract">0.2</value>
+  </custom>
+  <releases>
+    <release version="0.1.0" date="2026-11-18">
+      <description>
+        <p>First release: add feeds, read articles, star and save for later, search, folders, and OPML import and export.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

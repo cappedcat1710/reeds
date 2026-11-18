@@ -1,0 +1,42 @@
+/* SPDX-License-Identifier: Apache-2.0
+ *
+ * Reeds' own content only: the article's text and pictures. Every rule is under a reeds- class,
+ * every colour is a Luma token, and no LumaUI part is restyled.
+ */
+
+.reeds-article .reeds-body {
+    line-height: 1.6;
+}
+
+.reeds-article .reeds-title {
+    line-height: 1.2;
+}
+
+.reeds-article .reeds-heading {
+    margin-top: 10px;
+}
+
+.reeds-article .reeds-quote {
+    padding-left: 14px;
+    border-left: 3px solid @luma_line;
+}
+
+.reeds-article .reeds-code {
+    font-family: monospace;
+    color: @luma_ink;
+}
+
+.reeds-article .reeds-image {
+    border-radius: var(--lumaui-card-radius);
+}
+
+/* Links read as links: the theme's accent for text, underlined, in every article paragraph and quote. */
+.reeds-article label link,
+.reeds-article label link:visited {
+    color: @luma_accent_ink;
+    text-decoration: underline;
+}
+
+.reeds-article label link:hover {
+    color: @luma_accent;
+}
