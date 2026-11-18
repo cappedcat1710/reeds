@@ -58,3 +58,7 @@
 .reeds-fx-pop {
     color: @luma_accent;
 }
+
+.reeds-article .reeds-note {
+    margin-top: 6px;
+}

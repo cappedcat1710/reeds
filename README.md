@@ -20,6 +20,11 @@ The screenshots use sample feeds and articles written for the purpose.
 - **Add by address.** Type a site like `example.com`; Reeds looks for its feed. `feed://` links work too.
 - **Start quickly.** The first launch offers a few suggested feeds, or import an OPML file from another reader.
 - **Read.** Articles keep their text, links, quotes, lists, code and pictures. Next and previous move through the list.
+- **The whole article.** Many feeds only send a title or a teaser. When you open one, Reeds fetches the article's page
+  and shows the full text with its pictures, keeping your place when it arrives. A feed that already sends the whole
+  post is left alone. If a site refuses automated readers, Reeds says so and doesn't try to get around it; use
+  **Open original** there. **Load full article** in the ⋯ menu (Ctrl+Shift+L) tries again, and **Load full articles**
+  there turns the automatic fetching off.
 - **Keep.** Star an article, or save it to read later. Unsubscribing can be undone.
 - **Find.** Search every downloaded article, filter to unread, and group feeds in folders.
 - **Light and dark.** Reeds follows the desktop's colour scheme.
@@ -47,6 +52,7 @@ Everything can be done without a pointer.
 | Ctrl+1, Ctrl+2, Ctrl+3 | All articles, Read later, Starred |
 | Ctrl+D, Ctrl+B, Ctrl+U | Star, read later, mark as unread |
 | Ctrl+Shift+O | Open in the browser |
+| Ctrl+Shift+L | Load the full article |
 | Ctrl+C | Copy the selected text |
 | Ctrl+N | Add a feed (Escape cancels and returns to where you were) |
 | Ctrl+R | Refresh feeds |
@@ -57,7 +63,10 @@ Everything can be done without a pointer.
 
 ## Privacy
 
-Reeds asks for network access only, to fetch the feeds you add and the pictures in their articles. Links
+Reeds asks for network access only, to fetch the feeds you add, the pictures in their articles, and, when you open
+an article a feed only excerpts, that article's page (like opening it in a browser; turn it off with **Load full
+articles** in the ⋯ menu). Pictures and pages are only fetched from the public internet, never from addresses on your
+own computer or network, whatever a feed asks for. Links
 open through the desktop's portal, and import and export use its file chooser. Your library is a single
 SQLite file in the app's data folder. There is no account, analytics or tracking.
 
@@ -98,6 +107,7 @@ yet. The evidence file is left unfilled on purpose.
 | `src/main.py` | The window, the panes, the bars and the keyboard handling |
 | `src/reeds_feeds.py` | Fetching, reading RSS, Atom and RDF, OPML, and turning article HTML into blocks |
 | `src/reeds_store.py` | The SQLite library |
+| `src/reeds_article.py` | Finding the article in a web page (a reader mode), and choosing what to show |
 | `src/reeds_motion.py` | The motion: one overlay layer, LumaUI's easing and durations, Reduce Motion |
 | `src/reeds.css` | The article's own text and pictures, and the motion's colours |
 | `docs/simplyluma.com-DESIGN.md` | Notes on Luma's design language, used to match the theme |

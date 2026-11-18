@@ -10,7 +10,10 @@ from __future__ import annotations
 import gzip
 import html
 import http.client
+import ipaddress
+import os
 import re
+import socket
 import time
 import zlib
 from dataclasses import dataclass, field
@@ -18,17 +21,23 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from xml.etree import ElementTree as ET
 
 USER_AGENT = "Reeds/0.1 (feed reader for Luma)"
 MAX_FEED_BYTES = 6 * 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_PAGE_BYTES = 3 * 1024 * 1024
 TIMEOUT = 15
+ALLOW_LOCAL = os.environ.get("REEDS_ALLOW_LOCAL") == "1"      # for tests that serve sample pictures from this machine
 
 
 class FeedError(Exception):
     """A feed could not be fetched or read. The message is plain and fit to show."""
+
+
+class PageBlocked(FeedError):
+    """The site refuses automated readers (a bot check or an outright 403). Reeds does not try to get around it."""
 
 
 @dataclass
@@ -79,15 +88,48 @@ def clean_url(text: str) -> str:
     return text
 
 
-def _download(url: str, *, etag: str = "", modified: str = "", limit: int = MAX_FEED_BYTES) -> tuple[bytes, dict]:
+def is_public(url: str) -> bool:
+    """Whether `url` points at the public internet. Anything a feed tells Reeds to fetch (pictures, article
+    pages) must, so a feed cannot make it reach this computer or the network behind it."""
+    if ALLOW_LOCAL:
+        return True
+    parts = urlparse(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return False
+    try:
+        found = socket.getaddrinfo(parts.hostname, None)
+    except OSError:
+        return False
+    for info in found:
+        address = ipaddress.ip_address(info[4][0].split("%")[0])
+        if (address.is_private or address.is_loopback or address.is_link_local or address.is_multicast
+                or address.is_unspecified or address.is_reserved):
+            return False
+    return True
+
+
+class _PublicRedirects(HTTPRedirectHandler):
+    """Follows redirects, but only to public addresses."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        if not is_public(urljoin(req.full_url, newurl)):
+            raise HTTPError(newurl, 403, "redirected to a private address", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _download(url: str, *, etag: str = "", modified: str = "", limit: int = MAX_FEED_BYTES,
+              public_only: bool = False, accept: str = "") -> tuple[bytes, dict]:
+    if public_only and not is_public(url):
+        raise FeedError("That address isn’t a public web page.")
     headers = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate",
-               "Accept": "application/atom+xml, application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5"}
+               "Accept": accept or "application/atom+xml, application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5"}
     if etag:
         headers["If-None-Match"] = etag
     if modified:
         headers["If-Modified-Since"] = modified
     try:
-        with urlopen(Request(url, headers=headers), timeout=TIMEOUT) as response:  # noqa: S310 (http/https only)
+        opener = build_opener(_PublicRedirects).open if public_only else urlopen
+        with opener(Request(url, headers=headers), timeout=TIMEOUT) as response:  # noqa: S310 (http/https only)
             if urlparse(response.geturl()).scheme not in ("http", "https"):
                 raise FeedError("The address redirected somewhere that isn’t a web page.")
             raw = response.read(limit + 1)
@@ -97,6 +139,8 @@ def _download(url: str, *, etag: str = "", modified: str = "", limit: int = MAX_
     except HTTPError as error:
         if error.code == 304:
             return b"", {"not_modified": True}
+        if public_only and error.code in (401, 402, 403, 405, 406, 429, 451):
+            raise PageBlocked(f"The site doesn’t let Reeds load its pages ({error.code}).") from error
         raise FeedError(f"The site answered with an error ({error.code}).") from error
     except (URLError, TimeoutError, OSError, ValueError, http.client.HTTPException) as error:
         raise FeedError("Couldn’t reach that address. Check it and your connection.") from error
@@ -116,8 +160,29 @@ def _download(url: str, *, etag: str = "", modified: str = "", limit: int = MAX_
 
 def fetch_bytes(url: str, limit: int = MAX_IMAGE_BYTES) -> bytes:
     """A picture or other small file. Raises FeedError."""
-    data, _ = _download(url, limit=limit)
+    data, _ = _download(url, limit=limit, public_only=True)
     return data
+
+
+def fetch_page(url: str) -> tuple[str, str]:
+    """A web page as text, and the address it finally came from. Raises FeedError."""
+    raw, info = _download(url, limit=MAX_PAGE_BYTES, public_only=True,
+                          accept="text/html, application/xhtml+xml;q=0.9, */*;q=0.4")
+    kind = info.get("type", "").lower()
+    if kind and "html" not in kind and "xml" not in kind and "text/" not in kind:
+        raise FeedError("That link isn’t a web page.")
+    charset = ""
+    match = re.search(r"charset=([\w-]+)", kind)
+    if match:
+        charset = match.group(1)
+    else:
+        match = re.search(rb"<meta[^>]+charset=[\"']?([\w-]+)", raw[:4096], re.I)
+        charset = match.group(1).decode("ascii", "ignore") if match else "utf-8"
+    try:
+        text = raw.decode(charset, "replace")
+    except LookupError:
+        text = raw.decode("utf-8", "replace")
+    return text, info.get("url") or url
 
 
 def fetch_feed(url: str, *, etag: str = "", modified: str = "") -> Feed:

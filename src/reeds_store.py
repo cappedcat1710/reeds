@@ -40,6 +40,8 @@ create table if not exists entries (
     read integer not null default 0,
     starred integer not null default 0,
     later integer not null default 0,
+    full text not null default '',
+    full_state integer not null default 0,
     unique (feed_id, guid)
 );
 create index if not exists entries_feed on entries (feed_id, published desc);
@@ -74,6 +76,8 @@ class EntryRow:
     read: bool
     starred: bool
     later: bool
+    full: str = ""          # the whole article, fetched from its page (HTML)
+    full_state: int = 0     # 0 not tried, 1 loaded, 3 the page has nothing more, 4 the site refuses Reeds
 
     @property
     def when(self) -> float:
@@ -97,6 +101,11 @@ class Library:
         self.db.row_factory = sqlite3.Row
         self.db.execute("pragma foreign_keys = on")
         self.db.executescript(SCHEMA)
+        known = {row["name"] for row in self.db.execute("pragma table_info(entries)")}
+        if "full" not in known:            # a library made before whole articles were fetched
+            self.db.execute("alter table entries add column full text not null default ''")
+        if "full_state" not in known:
+            self.db.execute("alter table entries add column full_state integer not null default 0")
         self.db.commit()
 
     # ── Settings ────────────────────────────────────────────────────────────
@@ -194,7 +203,8 @@ class Library:
 
     def _entry(self, r: sqlite3.Row) -> EntryRow:
         return EntryRow(r["id"], r["feed_id"], r["feed_title"], r["title"], r["link"], r["author"], r["published"],
-                        r["summary"], r["content"], r["image"], bool(r["read"]), bool(r["starred"]), bool(r["later"]))
+                        r["summary"], r["content"], r["image"], bool(r["read"]), bool(r["starred"]), bool(r["later"]),
+                        r["full"], r["full_state"])
 
     def entries(self, place: str, *, unread_only: bool = False, query: str = "", limit: int = 500,
                 keep: set[int] | frozenset[int] = frozenset()) -> list[EntryRow]:
@@ -230,6 +240,10 @@ class Library:
         if flag not in ("read", "starred", "later"):
             raise ValueError(flag)
         self.db.execute(f"update entries set {flag} = ? where id = ?", (int(value), entry_id))
+        self.db.commit()
+
+    def set_full(self, entry_id: int, html: str, state: int) -> None:
+        self.db.execute("update entries set full = ?, full_state = ? where id = ?", (html, state, entry_id))
         self.db.commit()
 
     def mark_all_read(self, place: str) -> list[int]:

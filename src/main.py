@@ -21,9 +21,12 @@ from __future__ import annotations
 import os
 import re
 import sys
+import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import urlparse
 
 import gi
 
@@ -42,8 +45,9 @@ from luma_appkit import (  # noqa: E402
     CornerPill, add_style_sheet, apply_type, ask_for_file, attach_context_menu, lumaui_icon, panel_list,
 )
 
+import reeds_article as article_lib  # noqa: E402
 import reeds_feeds as feeds_lib  # noqa: E402
-from reeds_feeds import FeedError  # noqa: E402
+from reeds_feeds import FeedError, PageBlocked  # noqa: E402
 from reeds_motion import Motion  # noqa: E402
 from reeds_store import EntryRow, FeedRow, Library  # noqa: E402
 
@@ -54,6 +58,7 @@ LIST_WIDTH = 340
 LIST_WIDTH_NARROW = 296
 READING_WIDTH = 680
 MAX_IMAGES = 12
+IMAGE_CACHE_BYTES = 40 * 1024 * 1024    # fetched pictures kept for redraws and revisits
 
 # What "Add suggested feeds" adds: a few reliable, well-known feeds, so the first launch isn't an empty page.
 SUGGESTED = (
@@ -95,6 +100,12 @@ class ReedsWindow(AppWindow):
         self.place = "all"
         self.unread_only = self.lib.setting("unread_only", "1") == "1"
         self.load_images = self.lib.setting("images", "1") == "1"
+        self.full_articles = self.lib.setting("full_articles", "1") == "1"   # fetch the whole article when a feed sends a teaser
+        self._fetching_full: set[int] = set()
+        self._images: OrderedDict[str, bytes] = OrderedDict()                # pictures already fetched, newest last
+        self._images_size = 0
+        self._images_lock = threading.Lock()                                  # workers share the picture cache
+        self._error_note: tuple[int, str] | None = None
         self.query = ""
         self.selected: EntryRow | None = None
         self.keep: set[int] = set()                 # opened this session: they stay in an unread list
@@ -212,6 +223,8 @@ class ReedsWindow(AppWindow):
                         enabled=has_article),
                 Command("article.unread", "Mark as unread", self.toggle_read, "eye-off", shortcut=("Ctrl", "U"),
                         enabled=has_article),
+                Command("article.full", "Load full article", lambda: self.load_full(force=True), "file-text",
+                        shortcut=("Ctrl", "Shift", "L"), enabled=has_article),
                 Command("article.open", "Open in browser", self.open_original, "square-arrow-out-up-right",
                         shortcut=("Ctrl", "Shift", "O"), enabled=has_article),
             )),
@@ -551,6 +564,7 @@ class ReedsWindow(AppWindow):
         self._show_article(entry, focus=True, how=how)
         self.list_first.show_detail()
         self._render_chrome()
+        self.load_full(entry=entry)
 
     def _row_read(self, entry_id: int, read: bool) -> None:
         row = self.row_of.get(entry_id)
@@ -638,7 +652,7 @@ class ReedsWindow(AppWindow):
         column.append(source)
         title = self._label(GLib.markup_escape_text(entry.title), "title-1", css="reeds-title")
         column.append(title)
-        body_html = entry.content or entry.summary
+        body_html = entry.full if entry.full_state == 1 and entry.full else (entry.content or entry.summary)
         parts = [part for part in (
             entry.author,
             time.strftime("%-d %B %Y", time.localtime(entry.published)) if entry.published else "",
@@ -647,6 +661,9 @@ class ReedsWindow(AppWindow):
             column.append(self._label(GLib.markup_escape_text(" · ".join(parts)), "caption", muted=True, css="reeds-meta"))
 
         blocks = feeds_lib.article_blocks(body_html, entry.link)
+        if entry.full_state == 1 and blocks and blocks[0].kind in ("h1", "h2") and \
+                article_lib._norm(blocks[0].text) == article_lib._norm(entry.title):
+            blocks.pop(0)                    # the page repeats the title that is already above it
         pictures: list[tuple[Gtk.Picture, str]] = []
         has_image = any(block.kind == "img" for block in blocks)
         if entry.image and not has_image and self.load_images:
@@ -660,6 +677,9 @@ class ReedsWindow(AppWindow):
                 column.append(widget)
         if not blocks:
             column.append(self._label("There’s no text in this article. Open it in your browser to read it.", muted=True))
+        note = self._full_note(entry)
+        if note:
+            column.append(self._label(GLib.markup_escape_text(note), "caption", muted=True, css="reeds-note"))
         if entry.link:
             original = TextButton("Open original", icon="square-arrow-out-up-right", style="fill",
                                   on_click=self.open_original)
@@ -681,6 +701,131 @@ class ReedsWindow(AppWindow):
             GLib.idle_add(lambda: (self.focus_pane("article"), False)[1])
         for picture, url in pictures[:MAX_IMAGES]:
             self._load_picture(picture, url, entry.id)
+
+    # ── The whole article, when a feed only sent a teaser ───────────────────
+
+    def _full_note(self, entry: EntryRow) -> str:
+        """One quiet line under the text, when there is something to say about the rest of the article."""
+        host = (urlparse(entry.link).hostname or "").removeprefix("www.")
+        if entry.id in self._fetching_full:
+            return "Loading the full article…"
+        if self._error_note is not None and self._error_note[0] == entry.id:
+            return self._error_note[1]
+        if entry.full_state == 4:
+            return f"{host} doesn’t let Reeds load its pages. Use Open original to read the whole article."
+        if entry.full_state == 3 and article_lib.words(entry.content or entry.summary) < 40:
+            return "That page has no more text to load. Use Open original to see it."
+        return ""
+
+    def load_full(self, entry: EntryRow | None = None, force: bool = False) -> None:
+        """Fetches the article's page and shows the whole text. Automatic for teasers; `force` is the menu item."""
+        entry = entry or self.selected
+        if entry is None or not entry.link or entry.id in self._fetching_full:
+            return
+        if not force and (not self.full_articles or entry.full_state != 0
+                          or not article_lib.wants_full(entry.content or entry.summary)):
+            return
+        if force and entry.full_state == 1:
+            return
+        self._fetching_full.add(entry.id)
+        self._error_note = None
+        feed_body = entry.content or entry.summary
+        link = entry.link
+        if self.selected is not None and self.selected.id == entry.id:
+            self._refresh_article()
+
+        def work() -> tuple[str, str]:
+            try:
+                page, final = feeds_lib.fetch_page(link)
+            except PageBlocked:
+                return "blocked", ""
+            except FeedError as error:
+                return "error", str(error)
+            try:
+                found = article_lib.extract(page, final)
+                if found is None:
+                    return "none", ""
+                host = (urlparse(final).hostname or "").removeprefix("www.")
+                body = article_lib.compose(feed_body, found, host)
+            except Exception:       # a page that breaks the reader must not break the app
+                return "none", ""
+            return ("ok", body) if body else ("none", "")
+
+        def done(future: Future) -> bool:
+            outcome, payload = future.result()
+            self._fetching_full.discard(entry.id)
+            if self.closed:
+                return False
+            state = {"ok": 1, "none": 3, "blocked": 4}.get(outcome, 0)
+            if state:
+                self.lib.set_full(entry.id, payload if state == 1 else "", state)
+                entry.full, entry.full_state = (payload if state == 1 else ""), state
+            visible = self.selected is not None and self.selected.id == entry.id
+            if visible:
+                self._refresh_article()
+                if force:
+                    messages = {"ok": ("Loaded the full article", "done"), "none": ("That page has no more text", "warning"),
+                                "blocked": ("The site doesn’t let Reeds load it", "error"),
+                                "error": ("Couldn’t load the full article", "error")}
+                    text, kind = messages[outcome]
+                    Toast.show(self._toast_host(), text, kind=kind)
+                elif outcome == "error":
+                    self._show_note("Couldn’t load the full article. It is in the ⋯ menu to try again.")
+            return False
+
+        self.pool.submit(work).add_done_callback(lambda future: GLib.idle_add(done, future))
+
+    def _show_note(self, text: str) -> None:
+        if self.selected is not None:
+            self._error_note = (self.selected.id, text)
+            self._refresh_article()
+
+    def _scroll_of(self, root: Gtk.Widget | None) -> Gtk.ScrolledWindow | None:
+        if root is None:
+            return None
+        if isinstance(root, Gtk.ScrolledWindow):
+            return root
+        child = root.get_first_child()
+        while child is not None:
+            found = self._scroll_of(child)
+            if found is not None:
+                return found
+            child = child.get_next_sibling()
+        return None
+
+    def _refresh_article(self) -> None:
+        """Draws the open article again (its text has changed) without moving the reader."""
+        if self.selected is None:
+            return
+        old = self._scroll_of(self.article_scroll)
+        offset = old.get_vadjustment().get_value() if old is not None else 0.0
+        focused = self._pane_of(self.get_focus()) == "article"
+        self._show_article(self.selected, focus=focused, how="none")
+        if offset:
+            tries = [0]
+
+            def restore() -> bool:
+                """The new text is laid out a moment after it is shown, and a position the page is not yet tall
+                enough for is clamped, so this tries again until it holds (or the article is shorter)."""
+                scroll = self._scroll_of(self.article_scroll)
+                tries[0] += 1
+                if scroll is None or self.closed:
+                    return False
+                adjustment = scroll.get_vadjustment()
+                adjustment.set_value(offset)
+                reachable = adjustment.get_upper() - adjustment.get_page_size()
+                settled = abs(adjustment.get_value() - offset) < 2 or (reachable > 0 and reachable < offset)
+                return not settled and tries[0] < 24
+            GLib.timeout_add(40, restore)
+
+    def toggle_full(self) -> None:
+        self.full_articles = not self.full_articles
+        self.lib.set_setting("full_articles", "1" if self.full_articles else "0")
+        self._render_bars()
+        Toast.show(self._toast_host(), "Full articles will load" if self.full_articles else "Full articles won’t load",
+                   kind="done")
+        if self.full_articles and self.selected is not None:
+            self.load_full()
 
     def _swap_article(self, scroll: Gtk.Widget, how: str) -> None:
         stack = self.article_holder
@@ -772,10 +917,23 @@ class ReedsWindow(AppWindow):
 
     def _load_picture(self, picture: Gtk.Picture, url: str, entry_id: int) -> None:
         def work() -> bytes | None:
+            with self._images_lock:
+                cached = self._images.get(url)
+                if cached is not None:
+                    self._images.move_to_end(url)
+                    return cached
             try:
-                return feeds_lib.fetch_bytes(url)
+                data = feeds_lib.fetch_bytes(url)
             except FeedError:
                 return None
+            with self._images_lock:
+                if url not in self._images:
+                    self._images[url] = data
+                    self._images_size += len(data)
+                while self._images_size > IMAGE_CACHE_BYTES and len(self._images) > 1:
+                    _, old = self._images.popitem(last=False)
+                    self._images_size -= len(old)
+            return data
 
         def done(future: Future) -> bool:
             data = future.result()
@@ -815,9 +973,12 @@ class ReedsWindow(AppWindow):
                 items += [BarAction("pen-line", "Rename feed…", on_activate=lambda: self.rename_feed(feed)),
                           BarAction("folder", "Move to folder…", on_activate=lambda: self.move_feed(feed)),
                           BarAction("trash-2", "Unsubscribe", danger=True, on_activate=lambda: self.ask_unsubscribe(feed))]
+        if self.selected is not None and self.selected.link and self.selected.full_state != 1:
+            items.insert(1, BarAction("file-text", "Load full article", on_activate=lambda: self.load_full(force=True)))
         items += [BarAction("download", "Import feeds…", on_activate=self.import_feeds),
                   BarAction("upload", "Export feeds…", on_activate=self.export_feeds),
-                  BarAction("image", "Pictures in articles", active=self.load_images, on_activate=self.toggle_images)]
+                  BarAction("image", "Pictures in articles", active=self.load_images, on_activate=self.toggle_images),
+                  BarAction("book-open-text", "Load full articles", active=self.full_articles, on_activate=self.toggle_full)]
         return items
 
     def _places_panel(self):
